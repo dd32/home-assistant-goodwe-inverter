@@ -57,7 +57,11 @@ class GoodweUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.inverter: Inverter = inverter
         self._last_data: dict[str, Any] = {}
-        self._polled_entities: dict[BaseCoordinatorEntity, datetime] = {}
+        # Entities registered for periodic re-polling.
+        # Value is (interval_seconds, last_poll_datetime_or_None).
+        self._polled_entities: dict[
+            BaseCoordinatorEntity, tuple[int, datetime | None]
+        ] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the inverter."""
@@ -87,12 +91,17 @@ class GoodweUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(ex) from ex
 
     async def _update_polled_entities(self) -> None:
-        for entity, interval in list(self._polled_entities.items()):
-            if interval:
-                try:
-                    await entity.async_update()
-                except InverterError:
-                    _LOGGER.debug("Failed to update entity %s", entity.name)
+        now = datetime.now()
+        for entity, (interval, last_poll) in list(self._polled_entities.items()):
+            if last_poll is not None and (now - last_poll).total_seconds() < interval:
+                continue
+            try:
+                await entity.async_update()
+                self._polled_entities[entity] = (interval, now)
+                if hasattr(entity, "async_write_ha_state"):
+                    entity.async_write_ha_state()
+            except InverterError:
+                _LOGGER.debug("Failed to update entity %s", entity.name)
 
     def sensor_value(self, sensor: str) -> Any:
         """Answer current (or last known) value of the sensor."""
@@ -116,8 +125,15 @@ class GoodweUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def entity_state_polling(
         self, entity: BaseCoordinatorEntity, interval: int
     ) -> None:
-        """Enable/disable polling of entity state."""
+        """Enable/disable periodic re-polling of an entity's state.
+
+        interval: seconds between polls. Pass 0 to disable polling.
+        """
         if interval:
-            self._polled_entities[entity] = interval
+            # Preserve the existing last_poll timestamp when re-registering,
+            # otherwise None means "poll on next coordinator cycle".
+            existing = self._polled_entities.get(entity)
+            last_poll = existing[1] if existing else None
+            self._polled_entities[entity] = (interval, last_poll)
         else:
             self._polled_entities.pop(entity, None)

@@ -16,9 +16,10 @@ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import BaseCoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import GoodweConfigEntry
+from .coordinator import GoodweConfigEntry, GoodweUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class GoodweNumberEntityDescription(NumberEntityDescription):
     mapper: Callable[[any], int]
     setter: Callable[[Inverter, int], Awaitable[None]]
     filter: Callable[[Inverter], bool]
+    polling_interval: int = 0
 
 
 def _get_setting_unit(inverter: Inverter, setting: str) -> str:
@@ -65,6 +67,7 @@ NUMBERS = (
         mapper=lambda v: v,
         setter=lambda inv, val: inv.set_grid_export_limit(val),
         filter=lambda inv: _get_setting_unit(inv, "grid_export_limit") != "%",
+        polling_interval=300,
     ),
     # Export limit in %
     GoodweNumberEntityDescription(
@@ -79,6 +82,7 @@ NUMBERS = (
         mapper=lambda v: v,
         setter=lambda inv, val: inv.set_grid_export_limit(val),
         filter=lambda inv: _get_setting_unit(inv, "grid_export_limit") == "%",
+        polling_interval=300,
     ),
     GoodweNumberEntityDescription(
         key="battery_discharge_depth",
@@ -206,6 +210,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the inverter select entities from a config entry."""
     inverter = config_entry.runtime_data.inverter
+    coordinator = config_entry.runtime_data.coordinator
     device_info = config_entry.runtime_data.device_info
 
     entities = []
@@ -218,7 +223,9 @@ async def async_setup_entry(
             _LOGGER.debug("Could not read inverter setting %s", description.key)
             continue
 
-        entity = InverterNumberEntity(device_info, description, inverter, current_value)
+        entity = InverterNumberEntity(
+            coordinator, device_info, description, inverter, current_value
+        )
         # Set the max value of grid_export_limit and ems_power_limit (W version)
         if (
             description.key in ("grid_export_limit", "ems_power_limit")
@@ -232,7 +239,9 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class InverterNumberEntity(NumberEntity):
+class InverterNumberEntity(
+    BaseCoordinatorEntity[GoodweUpdateCoordinator], NumberEntity
+):
     """Inverter numeric setting entity."""
 
     _attr_should_poll = False
@@ -241,21 +250,29 @@ class InverterNumberEntity(NumberEntity):
 
     def __init__(
         self,
+        coordinator: GoodweUpdateCoordinator,
         device_info: DeviceInfo,
         description: GoodweNumberEntityDescription,
         inverter: Inverter,
         current_value: int,
     ) -> None:
         """Initialize the number inverter setting entity."""
+        super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{DOMAIN}-{description.key}-{inverter.serial_number}"
         self._attr_device_info = device_info
         self._attr_native_value = float(current_value)
         self._inverter: Inverter = inverter
+        # Register for periodic re-reads so external changes (e.g. via SolarGo)
+        # are eventually reflected in HA.
+        if description.polling_interval:
+            coordinator.entity_state_polling(self, description.polling_interval)
 
     async def async_update(self) -> None:
         """Get the current value from inverter."""
-        value = await self.entity_description.getter(self._inverter)
+        value = self.entity_description.mapper(
+            await self.entity_description.getter(self._inverter)
+        )
         self._attr_native_value = float(value)
 
     async def async_set_native_value(self, value: float) -> None:

@@ -27,6 +27,7 @@ class GoodweSwitchEntityDescription(SwitchEntityDescription):
 
     setting: str
     polling_interval: int = 0
+    always_poll: bool = False
 
 
 SWITCHES = (
@@ -42,6 +43,8 @@ SWITCHES = (
         entity_category=EntityCategory.CONFIG,
         device_class=SwitchDeviceClass.SWITCH,
         setting="grid_export",
+        polling_interval=300,
+        always_poll=True,
     ),
     GoodweSwitchEntityDescription(
         key="fast_charging_switch",
@@ -147,7 +150,11 @@ class InverterSwitchEntity(
 
     def _notify_coordinator(self) -> None:
         if self.entity_description.polling_interval:
-            self.coordinator.entity_state_polling(
-                self,
-                self.entity_description.polling_interval if self._attr_is_on else 0,
-            )
+            # always_poll switches are polled regardless of on/off state
+            # (used to catch external changes e.g. made via SolarGo).
+            # Others only poll while "on" (e.g. fast_charging).
+            if self.entity_description.always_poll or self._attr_is_on:
+                interval = self.entity_description.polling_interval
+            else:
+                interval = 0
+            self.coordinator.entity_state_polling(self, interval)
