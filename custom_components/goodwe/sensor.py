@@ -18,6 +18,7 @@ from goodwe.sensor import (
     EnumCalculated,
     EnumH,
     EnumL,
+    Text,
 )
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -221,7 +222,7 @@ class InverterSensor(CoordinatorEntity[GoodweUpdateCoordinator], SensorEntity):
                 self.entity_description = ENUM_SENSOR
                 self._attr_options = list(sensor._labels.values())
             elif (
-                isinstance(sensor, (EnumBitmap4, EnumBitmap22))
+                isinstance(sensor, (EnumBitmap4, EnumBitmap22, Text))
                 or sensor.id_ == "timestamp"
             ):
                 self.entity_description = TEXT_SENSOR

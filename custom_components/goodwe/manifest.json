@@ -12,6 +12,6 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/mletenay/home-assistant-goodwe-inverter/issues",
   "loggers": ["goodwe"],
-  "requirements": ["goodwe==0.4.10"],
+  "requirements": ["goodwe @ git+https://github.com/dd32/goodwe.git@add/claude/esa-register-definitions"],
   "version": "0.9.9.30"
 }
